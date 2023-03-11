@@ -1,4 +1,4 @@
-# CoTPC
+# Vision-based CoTPC
 Vision-based Chain-of-Thought Predictive Control
 
 ### Tasks
