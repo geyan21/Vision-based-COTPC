@@ -6,8 +6,12 @@ from torch.utils.data.dataset import Dataset
 from torch.nn.utils.rnn import pad_sequence
 import torch
 
+from tqdm import tqdm
+from mani_skill2.utils.common import flatten_state_dict
+
 # Please specify the data path.
-DATA_PATH = '/data/geyan21/projects/CoTPC/data/v0/raw/demos/rigid_body'  
+# DATA_PATH = '/data/geyan21/projects/CoTPC/data/v0/raw/demos/rigid_body'  
+DATA_PATH = '/home/benny/Desktop/CSE291/Vision-based-COTPC/data/CoTPC-Demos'  
 
 
 class MS2Demos(Dataset):
@@ -66,12 +70,19 @@ class MS2Demos(Dataset):
                 s_idx, e_idx = 0, l
         assert e_idx <= l, f'{e_idx}, {l}'
 
+        # pre-process rgbd images
+        rgbd = self.data['obs'][index][s_idx:e_idx].astype(np.float32)
+        rgbd = rescale_rgbd(rgbd)
+        # permute data so that channels are the first dimension as PyTorch expects this
+        rgbd = np.transpose(rgbd, (0, 3, 1, 2))  # shape: (traj_len, 8, 128, 128)
+        
         # Call get_key_states() if you want to use the key states.
         # Here `s` is the state observation, `a` is the action, 
         # `env_states` not used during training (can be used to reconstruct env for debugging).
         # `t` is used for positional embedding as in Decision Transformer.
         data_dict = {
-            's': self.data['obs'][index][s_idx:e_idx].astype(np.float32),
+            'o': rgbd,  # rgbd image
+            's': self.data['states'][index][s_idx:e_idx].astype(np.float32),  # robot proprioception
             'a': self.data['actions'][index][s_idx:e_idx].astype(np.float32),
             't': np.array([s_idx]).astype(np.float32),  
             # 'env_states': self.data['env_states'][index][s_idx:e_idx].astype(np.float32),
@@ -82,8 +93,8 @@ class MS2Demos(Dataset):
             data_dict['k'] = self.idx_to_key_states[f'key_states_{index}']
         return data_dict
 
-    def info(self):  # Get observation and action shapes.
-        return self.data['obs'][0].shape[-1], self.data['actions'][0].shape[-1]
+    def info(self):  # Get observation, state and action shapes.
+        return self.data['obs'][0].shape[1:], self.data['states'][0].shape[-1], self.data['actions'][0].shape[-1]
 
     def load_demo_dataset(self, path, length, duplicate):  
         dataset = {}
@@ -114,8 +125,14 @@ class MS2Demos(Dataset):
         # `env_states` is used for reseting the env (might be helpful for eval)
         dataset['env_states'] = [np.array(
             traj_all[f"traj_{i}"]['env_states']) for i in ids]
+        
         # `obs` is the observation of each step.
-        dataset['obs'] = [np.array(traj_all[f"traj_{i}"]["obs"]) for i in ids]
+        # For vision-based trajectories, the 'obs' contains states and observation information:
+        # state: robot proprioception
+        # observation: rgbd images
+        print("################ Reading RGBD Images ################")
+        dataset['obs'] = [convert_observation(traj_all[f"traj_{i}"]["obs"]) for i in tqdm(ids)] 
+        dataset['states'] = [convert_state(traj_all[f"traj_{i}"]["obs"]) for i in ids]
         dataset['actions'] = [np.array(traj_all[f"traj_{i}"]["actions"]) for i in ids]
         # `rewards` is not currently used in CoTPC training.
         dataset['rewards'] = [np.array(traj_all[f"traj_{i}"]["rewards"]) for i in ids] 
@@ -152,10 +169,10 @@ class MS2Demos(Dataset):
                 if key: break
             key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
         
-        # If PickCube (two key states)
+        # If PickCube / LiftCube (two key states)
         # key state I: is_grasped -> true
         # key state II: end of the trajectory
-        if self.task == 'PickCube-v0':
+        if self.task == 'PickCube-v0' or self.task == 'LiftCube-v1':
             for step_idx, key in enumerate(self.data['infos/is_grasped'][idx]):
                 if key: break
             key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
@@ -182,6 +199,38 @@ class MS2Demos(Dataset):
         assert len(key_states) > 0, self.task
         return key_states
 
+def convert_observation(observation):
+    # flattens the original observation by flattening the state dictionaries
+    # and combining the rgb and depth images
+
+    # image data is not scaled here and is kept as uint16 to save space
+    image_obs = observation["image"]
+    rgb = image_obs["base_camera"]["rgb"]
+    depth = image_obs["base_camera"]["depth"]
+    rgb2 = image_obs["hand_camera"]["rgb"]
+    depth2 = image_obs["hand_camera"]["depth"]
+    # combine the RGB and depth images
+    rgbd = np.concatenate([rgb, depth, rgb2, depth2], axis=-1)
+    return rgbd
+
+def convert_state(observation):
+    # flattens the original observation by flattening the state dictionaries
+    # and combining the robot proprioception
+    base_pose = np.array(observation['agent']['base_pose'])
+    qpos = np.array(observation['agent']['qpos'])
+    qvel = np.array(observation['agent']['qvel'])
+    tcp_pose = np.array(observation['extra']['tcp_pose'])
+    # combine the robot proprioception
+    state = np.hstack([base_pose, qpos, qvel, tcp_pose])
+    return state
+
+def rescale_rgbd(rgbd):
+    # rescales rgbd data and changes them to floats
+    rgb1 = rgbd[..., 0:3] / 255.0
+    rgb2 = rgbd[..., 4:7] / 255.0
+    depth1 = rgbd[..., 3:4] / (2**10)
+    depth2 = rgbd[..., 7:8] / (2**10) 
+    return np.concatenate([rgb1, depth1, rgb2, depth2], axis=-1)
 
 # To obtain the padding function for sequences.
 def get_padding_fn(data_names):
@@ -214,17 +263,18 @@ if __name__ == "__main__":
     
     # The default values for CoTPC for tasks in ManiSkill2.
     batch_size, num_traj, seed, min_seq_length, max_seq_length, task = \
-        256, 500, 0, 60, 60, 'PickCube-v0'
+        256, 100, 0, 60, 60, 'LiftCube-v1'
 
     train_dataset = MS2Demos(
         control_mode='pd_joint_delta_pos', 
+        obs_mode='rgbd',
         length=num_traj, seed=seed,
         min_seq_length=min_seq_length, 
         max_seq_length=max_seq_length,
         with_key_states=True,
         task=task)
 
-    collate_fn = get_padding_fn(['s', 'a', 't', 'k'])
+    collate_fn = get_padding_fn(['o', 's', 'a', 't', 'k'])
     train_data = DataLoader(
         dataset=train_dataset, 
         batch_size=batch_size, 
@@ -232,10 +282,11 @@ if __name__ == "__main__":
         collate_fn=collate_fn)
     
     data = next(iter(train_data))
-    print(len(data))  # 4  
+    # print(len(data))
     for k, v in data.items():
         print(k, v.shape)
-        # 's', [256, 60, 51]
-        # 'a', [256, 60, 8]
-        # 't', [256, 1]
-        # 'k', [256, 2, 51]
+        # o torch.Size([256, 60, 8, 128, 128])
+        # s torch.Size([256, 60, 32])
+        # a torch.Size([256, 60, 8])
+        # t torch.Size([256, 1])
+        # k torch.Size([256, 2, 128, 128, 8])
