@@ -94,7 +94,9 @@ class MS2Demos(Dataset):
         return data_dict
 
     def info(self):  # Get observation, state and action shapes.
-        return self.data['obs'][0].shape[1:], self.data['states'][0].shape[-1], self.data['actions'][0].shape[-1]
+        obs_dim = (self.data['obs'][0].shape[3], self.data['obs'][0].shape[1], 
+                   self.data['obs'][0].shape[2])
+        return obs_dim, self.data['states'][0].shape[-1], self.data['actions'][0].shape[-1]
 
     def load_demo_dataset(self, path, length, duplicate):  
         dataset = {}
@@ -155,7 +157,7 @@ class MS2Demos(Dataset):
         if self.task == 'TurnFaucet-v0':
             for step_idx, key in enumerate(self.data['infos/is_contacted'][idx]):
                 if key: break
-            key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
 
         # If PegInsertion (three key states)
         # key state I: is_grasped -> true
@@ -164,10 +166,10 @@ class MS2Demos(Dataset):
         if self.task == 'PegInsertionSide-v0':
             for step_idx, key in enumerate(self.data['infos/is_grasped'][idx]):
                 if key: break
-            key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
             for step_idx, key in enumerate(self.data['infos/pre_inserted'][idx]):
                 if key: break
-            key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
         
         # If PickCube / LiftCube (two key states)
         # key state I: is_grasped -> true
@@ -175,7 +177,7 @@ class MS2Demos(Dataset):
         if self.task == 'PickCube-v0' or self.task == 'LiftCube-v1':
             for step_idx, key in enumerate(self.data['infos/is_grasped'][idx]):
                 if key: break
-            key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
         
         # If StackCube (three key states)
         # key state I: is_cubaA_grasped -> true
@@ -185,15 +187,15 @@ class MS2Demos(Dataset):
         if self.task == 'StackCube-v0':
             for step_idx, key in enumerate(self.data['infos/is_cubaA_grasped'][idx]):
                 if key: break
-            key_states.append(self.data['obs'][idx][step_idx+1].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
             for step_idx, k1 in enumerate(self.data['infos/is_cubeA_on_cubeB'][idx]):
                 k2 = self.data['infos/is_cubaA_grasped'][idx][step_idx]
                 if k1 and not k2: break
             # Right before such a state and so we do not use step_idx+1.
-            key_states.append(self.data['obs'][idx][step_idx].astype(np.float32))
+            key_states.append(self.data['states'][idx][step_idx].astype(np.float32))
 
         # Always append the last state in the trajectory as the last key state.
-        key_states.append(self.data['obs'][idx][-1].astype(np.float32))
+        key_states.append(self.data['states'][idx][-1].astype(np.float32))
         
         key_states = np.stack(key_states, 0).astype(np.float32)
         assert len(key_states) > 0, self.task
@@ -268,6 +270,7 @@ if __name__ == "__main__":
     train_dataset = MS2Demos(
         control_mode='pd_joint_delta_pos', 
         obs_mode='rgbd',
+        duplicate=1,
         length=num_traj, seed=seed,
         min_seq_length=min_seq_length, 
         max_seq_length=max_seq_length,
@@ -279,6 +282,7 @@ if __name__ == "__main__":
         dataset=train_dataset, 
         batch_size=batch_size, 
         shuffle=True, 
+        num_workers=16,
         collate_fn=collate_fn)
     
     data = next(iter(train_data))
@@ -289,4 +293,4 @@ if __name__ == "__main__":
         # s torch.Size([256, 60, 32])
         # a torch.Size([256, 60, 8])
         # t torch.Size([256, 1])
-        # k torch.Size([256, 2, 128, 128, 8])
+        # k torch.Size([256, 2, 32])

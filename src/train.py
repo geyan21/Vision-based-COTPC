@@ -25,7 +25,8 @@ except ImportError:
     USE_WANDB = False
 
 # Please specify the model path (base folder).
-MODEL_PATH = '/data/geyan21/projects/CoTPC/models'
+# MODEL_PATH = '/data/geyan21/projects/CoTPC/models'
+MODEL_PATH = '/home/benny/Desktop/CSE291/Vision-based-COTPC/models'
 
 
 def parse_args():
@@ -33,7 +34,7 @@ def parse_args():
     
     # Training hyper-parameters.
     parser.add_argument("--n_iters", default=1_600_000, type=int, help="Number of training iterations.")
-    parser.add_argument("--batch_size", default=256, type=int, help="Batch size.")
+    parser.add_argument("--batch_size", default=64, type=int, help="Batch size.")
     parser.add_argument("--init_lr", default='5e-4', type=str, help="The initial learning rate.")
     parser.add_argument("--weight_decay", default='0', type=str, help="Weight decay coefficient.")
     parser.add_argument("--beta1", default='0.9', type=str, help="Beta1 in the Adam optimizer.")
@@ -60,7 +61,7 @@ def parse_args():
     parser.add_argument('--task', type=str, default='PickCube-v0', help="Task (env-id) in ManiSkill2.")
     parser.add_argument('--control_mode', type=str, default='pd_joint_delta_pos', 
                         help="Control mode used in envs from ManiSkill2.")
-    parser.add_argument('--obs_mode', type=str, default='state', 
+    parser.add_argument('--obs_mode', type=str, default='rgbd', 
                         help="State mode used in envs from ManiSkill2.")
     parser.add_argument("--seed", default=0, type=int,help="Random seed for data spliting.")
     parser.add_argument("--num_traj", default=-1, type=int, help="Number of training trajectories.")
@@ -71,13 +72,13 @@ def parse_args():
                         help="Mininum length of sequences sampled from demo trajectories in training.")
 
     # Save and log frequencies.
-    parser.add_argument("--save_every", default=40000, type=int, help="Save model every # iters.")
-    parser.add_argument("--log_every", default=2000, type=int, help="log metrics every # iters.")
+    parser.add_argument("--save_every", default=10000, type=int, help="Save model every # iters.")
+    parser.add_argument("--log_every", default=100, type=int, help="log metrics every # iters.")
     
     # General hyper-parameters for the GPT architecture.
     parser.add_argument("--n_layer", default=4, type=int, help="Number of attention layers.")
     parser.add_argument("--n_head", default=8, type=int, help="Number of attention heads.")
-    parser.add_argument("--n_embd", default=128, type=int, help="Hidden feature dimension.")
+    parser.add_argument("--n_embd", default=320, type=int, help="Hidden feature dimension.")
 
     # For faster data loader.
     parser.add_argument("--num_workers", default=0, type=int, 
@@ -125,6 +126,7 @@ if __name__ == "__main__":
     train_dataset = MS2Demos(
         control_mode=args.control_mode, 
         obs_mode=args.obs_mode,
+        duplicate=1,
         length=args.num_traj, seed=args.seed,
         min_seq_length=args.min_seq_length, 
         max_seq_length=args.context_length,
@@ -134,7 +136,7 @@ if __name__ == "__main__":
     print('Max steps:', train_dataset.max_steps)
 
     collate_fn = get_padding_fn(
-        ['s', 'a', 't'] + ['k'] if 'cot' in args.model_type else [])
+        ['o', 's', 'a', 't'] + ['k'] if 'cot' in args.model_type else [])
     train_data = DataLoader(
         dataset=train_dataset, 
         batch_size=args.batch_size, 
@@ -146,7 +148,8 @@ if __name__ == "__main__":
     )
     data_iter = iter(train_data)
 
-    state_dim, action_dim = train_dataset.info()
+    obs_dim, state_dim, action_dim = train_dataset.info()
+    print("obs_dim: ", obs_dim)
     conf = GPTConfig(
         args.context_length, 
         n_layer=args.n_layer, 
@@ -160,7 +163,7 @@ if __name__ == "__main__":
         resid_pdrop=float(args.dropout),
         attn_pdrop=float(args.dropout),
     )
-    model = GPTWithCoT(conf, state_dim=state_dim, action_dim=action_dim).cuda()
+    model = GPTWithCoT(conf, obs_dim=obs_dim, state_dim=state_dim, action_dim=action_dim).cuda()
     optimizer = model.configure_adamw_optimizers({
         'init_lr': float(args.init_lr),
         'weight_decay': float(args.weight_decay),
@@ -213,7 +216,7 @@ if __name__ == "__main__":
         batch = {k: v.cuda() for k, v in batch.items()}
                         
         # Forward pass.
-        act_pred,  key_states_pred = model(batch['s'], batch['t'], batch['a'])
+        act_pred,  key_states_pred = model(batch['o'], batch['s'], batch['t'], batch['a'])
         
         # Obtain training losses.
         loss_act_pred = get_loss(act_pred, batch['a'], batch['lengths'])

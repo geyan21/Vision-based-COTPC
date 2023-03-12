@@ -14,6 +14,51 @@ from torch.nn import functional as F
 import numpy as np
 
 
+class NatureCNN(nn.Module):
+    def __init__(self, image_size=(128, 128), in_channels=8, rgbd_feature_size=256, 
+                 state_feature_size=64, state_size=-1):
+        super().__init__()
+
+        assert state_size > 0
+        extractors = {}
+
+        self.out_features = 0
+        self.rgbd_feature_size = rgbd_feature_size
+
+        # here we use a NatureCNN architecture to process images, but any architecture is permissble here
+        cnn = nn.Sequential(
+            nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            nn.Flatten()
+        )
+
+        # to easily figure out the dimensions after flattening, we pass a test tensor
+        test_tensor = torch.zeros(
+            [in_channels, image_size[0], image_size[1]]
+        )
+        with torch.no_grad():
+            n_flatten = cnn(test_tensor[None]).shape[1]
+            fc = nn.Sequential(nn.Linear(n_flatten, rgbd_feature_size), nn.ReLU())
+        extractors["obs"] = nn.Sequential(cnn, fc)
+        
+        # for state data we simply pass it through a single linear layer
+        extractors["states"] = nn.Linear(state_size, state_feature_size)
+
+        self.extractors = nn.ModuleDict(extractors)
+
+    def forward(self, obs, states) -> torch.Tensor:
+        B, T, C, H, W = obs.shape
+        obs = obs.view(-1, C, H, W) # [B*T, 8, 128, 128]
+        obs_feature = self.extractors["obs"](obs)
+        obs_feature = obs_feature.view(B, T, -1)  # [B, T, 256]
+        state_feature = self.extractors["states"](states)  # [B, T, 64]
+        return torch.cat([obs_feature, state_feature], dim=2)
+
+
 class MLP(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dims=[], act_fn='relu'):
         super().__init__()
@@ -216,11 +261,12 @@ class GPTWithCoT(nn.Module):
     is specified as block_size, which does not count the key state query tokens. 
     """
 
-    def __init__(self, config, state_dim=-1, action_dim=-1):
+    def __init__(self, config, obs_dim=(8,128,128), state_dim=-1, action_dim=-1):
         super().__init__()
 
-        assert state_dim > 0 and action_dim > 0
+        assert len(obs_dim) == 3 and state_dim > 0 and action_dim > 0
         self.config = config
+        self.obs_dim = obs_dim
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.model_type = config.model_type
@@ -246,7 +292,9 @@ class GPTWithCoT(nn.Module):
         self.blocks = BlocksWithCoT(config)
         
         # State embeddings.
-        self.state_encoder = MLP(self.state_dim, config.n_embd, hidden_dims=[256])
+        self.state_encoder = NatureCNN(image_size=(self.obs_dim[1], self.obs_dim[2]), 
+                                       in_channels=self.obs_dim[0], rgbd_feature_size=256, 
+                                       state_feature_size=64, state_size=self.state_dim)
         
         # Action embeddings.
         if '+a' in self.model_type:
@@ -262,6 +310,7 @@ class GPTWithCoT(nn.Module):
             key_state_predictors = []
             for _ in self.key_state_loss:
                 key_state_predictors.append(
+                    # TODO: 
                     MLP(config.n_embd, self.state_dim, hidden_dims=[256]))
             # Register all the key state predictors.
             self.key_state_predictors = nn.ModuleList(key_state_predictors)  
@@ -282,9 +331,9 @@ class GPTWithCoT(nn.Module):
     # `timesteps` is used for the global+local position embedding design similar
     # to the one in Decision Transformer. `key_state_mask` is used so that the 
     # (all-to-all) key state query tokens can attend to later tokens. 
-    def forward(self, states, timesteps, actions=None, key_state_mask=None):
+    def forward(self, obs, states, timesteps, actions=None, key_state_mask=None):
         B, T = states.shape[0], states.shape[1]
-        state_embeddings = self.state_encoder(states)
+        state_embeddings = self.state_encoder(obs, states)
 
         # Embeddings for state (action, and key state query) tokens.
         token_embeddings = torch.zeros([B, self.block_size, self.config.n_embd], 
@@ -297,7 +346,8 @@ class GPTWithCoT(nn.Module):
             token_embeddings[:,:T*2:2,:] = state_embeddings
             if actions is not None: 
                 # Assume the last action is not used as inputs during training.
-                token_embeddings[:,1:T*2-1:2,:] = self.action_encoder(actions[:,:T-1])            
+                action_embedding = self.action_encoder(actions[:,:T-1]) 
+                token_embeddings[:,1:T*2-1:2,:] = action_embedding
                     
         else:
             token_embeddings[:,:T,:] = state_embeddings
