@@ -83,6 +83,10 @@ def parse_args():
     # For faster data loader.
     parser.add_argument("--num_workers", default=0, type=int, 
                         help="Use positive number for async data loading.")
+    
+    # For the CNN-based RGBD feature encoder
+    parser.add_argument("--rgbd_feature_size", default=256, type=int, help="Length of the rgbd feature vector.")
+    parser.add_argument("--state_feature_size", default=64, type=int, help="Length of the state feature vector.")
 
     return parser.parse_args()
 
@@ -163,7 +167,8 @@ if __name__ == "__main__":
         resid_pdrop=float(args.dropout),
         attn_pdrop=float(args.dropout),
     )
-    model = GPTWithCoT(conf, obs_dim=obs_dim, state_dim=state_dim, action_dim=action_dim).cuda()
+    model = GPTWithCoT(conf, obs_dim=obs_dim, state_dim=state_dim, action_dim=action_dim,
+            rgbd_feature_size=args.rgbd_feature_size, state_feature_size=args.state_feature_size).cuda()
     optimizer = model.configure_adamw_optimizers({
         'init_lr': float(args.init_lr),
         'weight_decay': float(args.weight_decay),

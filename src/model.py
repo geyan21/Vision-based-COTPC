@@ -14,6 +14,7 @@ from torch.nn import functional as F
 import numpy as np
 
 
+# Make sure rgbd_feature_size + state_feature_size = n_embd!!!
 class NatureCNN(nn.Module):
     def __init__(self, image_size=(128, 128), in_channels=8, rgbd_feature_size=256, 
                  state_feature_size=64, state_size=-1):
@@ -261,10 +262,12 @@ class GPTWithCoT(nn.Module):
     is specified as block_size, which does not count the key state query tokens. 
     """
 
-    def __init__(self, config, obs_dim=(8,128,128), state_dim=-1, action_dim=-1):
+    def __init__(self, config, obs_dim=(8,128,128), state_dim=-1, action_dim=-1, 
+                 rgbd_feature_size=256, state_feature_size=64):
         super().__init__()
 
         assert len(obs_dim) == 3 and state_dim > 0 and action_dim > 0
+        assert rgbd_feature_size + state_feature_size == config.n_embd
         self.config = config
         self.obs_dim = obs_dim
         self.state_dim = state_dim
@@ -274,6 +277,8 @@ class GPTWithCoT(nn.Module):
         self.key_state_loss = config.key_state_loss
         self.len_key_states = config.len_key_states
         self.block_size = config.block_size
+        self.rgbd_feature_size = rgbd_feature_size
+        self.state_feature_size = state_feature_size
 
         # Set up learnable position embedding synchronized for s and a tokens, as proposed
         # in Decision Transformer. We use a similar global+local position embedding design.
@@ -293,8 +298,8 @@ class GPTWithCoT(nn.Module):
         
         # State embeddings.
         self.state_encoder = NatureCNN(image_size=(self.obs_dim[1], self.obs_dim[2]), 
-                                       in_channels=self.obs_dim[0], rgbd_feature_size=256, 
-                                       state_feature_size=64, state_size=self.state_dim)
+                            in_channels=self.obs_dim[0], rgbd_feature_size=self.rgbd_feature_size, 
+                            state_feature_size=self.state_feature_size, state_size=self.state_dim)
         
         # Action embeddings.
         if '+a' in self.model_type:
@@ -310,7 +315,6 @@ class GPTWithCoT(nn.Module):
             key_state_predictors = []
             for _ in self.key_state_loss:
                 key_state_predictors.append(
-                    # TODO: 
                     MLP(config.n_embd, self.state_dim, hidden_dims=[256]))
             # Register all the key state predictors.
             self.key_state_predictors = nn.ModuleList(key_state_predictors)  
