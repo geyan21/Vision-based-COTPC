@@ -140,6 +140,8 @@ if __name__ == "__main__":
     state_dim = 32
     action_dim = 8
     max_timestep = state_dict_from_ckpt['global_pos_emb'].shape[1]
+    print("max_timestep: ", max_timestep)
+    print("checkpoint: ", args.from_ckpt)
     conf = GPTConfig(
         args.context_length, 
         n_layer=args.n_layer, 
