@@ -12,52 +12,47 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
+import torchvision
 
 
-# Make sure rgbd_feature_size + state_feature_size = n_embd!!!
-class NatureCNN(nn.Module):
-    def __init__(self, image_size=(128, 128), in_channels=8, rgbd_feature_size=256, 
-                 state_feature_size=64, state_size=-1):
+class rgb_encoder(nn.Module):
+    def __init__(self, feature_size=64):
         super().__init__()
-
-        assert state_size > 0
-        extractors = {}
-
-        self.out_features = 0
-        self.rgbd_feature_size = rgbd_feature_size
-
-        # here we use a NatureCNN architecture to process images, but any architecture is permissble here
-        cnn = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=8, stride=4, padding=0),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0),
-            nn.ReLU(),
-            nn.Flatten()
-        )
-
-        # to easily figure out the dimensions after flattening, we pass a test tensor
-        test_tensor = torch.zeros(
-            [in_channels, image_size[0], image_size[1]]
-        )
-        with torch.no_grad():
-            n_flatten = cnn(test_tensor[None]).shape[1]
-            fc = nn.Sequential(nn.Linear(n_flatten, rgbd_feature_size), nn.ReLU())
-        extractors["obs"] = nn.Sequential(cnn, fc)
         
-        # for state data we simply pass it through a single linear layer
-        extractors["states"] = nn.Linear(state_size, state_feature_size)
+        # self.resnet = torchvision.models.resnet18(pretrained=True)
+        self.resnet = torchvision.models.squeezenet1_0(pretrained=True)
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+        # self.resnet.fc = nn.Linear(512, feature_size)
+        self.resnet.classifier[1] = nn.Conv2d(512, feature_size, kernel_size=(1, 1), stride=(1, 1))
+        
+    def forward(self, rgb) -> torch.Tensor:
+        B, T, C, H, W = rgb.shape
+        rgb = rgb.view(-1, C, H, W) # [B*T, 3, 128, 128]
+        upscaled_rgb = F.interpolate(rgb, scale_factor=2, mode='bilinear', align_corners=False)
+        rgb_feature = self.resnet(upscaled_rgb)
+        rgb_feature = rgb_feature.view(B, T, -1)  # [B, T, 64]
+        return rgb_feature
 
-        self.extractors = nn.ModuleDict(extractors)
 
-    def forward(self, obs, states) -> torch.Tensor:
-        B, T, C, H, W = obs.shape
-        obs = obs.view(-1, C, H, W) # [B*T, 8, 128, 128]
-        obs_feature = self.extractors["obs"](obs)
-        obs_feature = obs_feature.view(B, T, -1)  # [B, T, 256]
-        state_feature = self.extractors["states"](states)  # [B, T, 64]
-        return torch.cat([obs_feature, state_feature], dim=2)
+class depth_encoder(nn.Module):
+    def __init__(self, feature_size=64):
+        super().__init__()
+        
+        self.conv = nn.Conv2d(1, 3, kernel_size=1)
+        # self.resnet = torchvision.models.resnet18(pretrained=True)
+        self.resnet = torchvision.models.squeezenet1_0(pretrained=True)
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+        # self.resnet.fc = nn.Linear(512, feature_size)
+        self.resnet.classifier[1] = nn.Conv2d(512, feature_size, kernel_size=(1, 1), stride=(1, 1))
+    
+    def forward(self, depth) -> torch.Tensor:
+        B, T, C, H, W = depth.shape
+        depth = depth.view(-1, C, H, W) # [B*T, 1, 128, 128]
+        depth_feature = self.resnet(self.conv(depth))
+        depth_feature = depth_feature.view(B, T, -1)  # [B, T, 64]
+        return depth_feature
 
 
 class MLP(nn.Module):
@@ -297,9 +292,11 @@ class GPTWithCoT(nn.Module):
         self.blocks = BlocksWithCoT(config)
         
         # State embeddings.
-        self.state_encoder = NatureCNN(image_size=(self.obs_dim[1], self.obs_dim[2]), 
-                            in_channels=self.obs_dim[0], rgbd_feature_size=self.rgbd_feature_size, 
-                            state_feature_size=self.state_feature_size, state_size=self.state_dim)
+        self.rgb1_encoder = rgb_encoder(feature_size=64)
+        self.depth1_encoder = depth_encoder(feature_size=64)
+        self.rgb2_encoder = rgb_encoder(feature_size=64)
+        self.depth2_encoder = depth_encoder(feature_size=64)
+        self.proprioception_encoder = MLP(self.state_dim, output_dim=64)
         
         # Action embeddings.
         if '+a' in self.model_type:
@@ -337,7 +334,13 @@ class GPTWithCoT(nn.Module):
     # (all-to-all) key state query tokens can attend to later tokens. 
     def forward(self, obs, states, timesteps, actions=None, key_state_mask=None):
         B, T = states.shape[0], states.shape[1]
-        state_embeddings = self.state_encoder(obs, states)
+        rgb1 = self.rgb1_encoder(obs[:,:,0:3,:,:])
+        depth1 = self.depth1_encoder(obs[:,:,3:4,:,:])
+        rgb2 = self.rgb2_encoder(obs[:,:,4:7,:,:])
+        depth2 = self.depth2_encoder(obs[:,:,7:8,:,:])
+        propriception = self.proprioception_encoder(states)
+        
+        state_embeddings = torch.cat([rgb1, depth1, rgb2, depth2, propriception], dim=2)
 
         # Embeddings for state (action, and key state query) tokens.
         token_embeddings = torch.zeros([B, self.block_size, self.config.n_embd], 
@@ -405,7 +408,7 @@ class GPTWithCoT(nn.Module):
         decay = set()
         no_decay = set()
         whitelist_weight_modules = (torch.nn.Linear, torch.nn.Conv2d)
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding, torch.nn.BatchNorm2d)
         for mn, m in self.named_modules():
             for pn, _ in m.named_parameters():
                 fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
