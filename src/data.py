@@ -154,7 +154,7 @@ class MS2Demos(Dataset):
         # If TurnFaucet (two key states)
         # key state I: is_contacted -> true
         # key state II: end of the trajectory
-        if self.task == 'TurnFaucet-v0':
+        if self.task == 'TurnFaucet-v0' or self.task == 'TurnFaucet-v1':
             for step_idx, key in enumerate(self.data['infos/is_contacted'][idx]):
                 if key: break
             key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
@@ -163,7 +163,7 @@ class MS2Demos(Dataset):
         # key state I: is_grasped -> true
         # key state II: pre_inserted -> true
         # key state III: end of the trajectory
-        if self.task == 'PegInsertionSide-v0':
+        if self.task == 'PegInsertionSide-v0' or self.task == 'PegInsertionSide-v1':
             for step_idx, key in enumerate(self.data['infos/is_grasped'][idx]):
                 if key: break
             key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
@@ -184,7 +184,7 @@ class MS2Demos(Dataset):
         # key state II: the last state of is_cubeA_on_cubeB -> true 
         #               right before is_cubaA_grasped -> false
         # key state III: end of the trajectory
-        if self.task == 'StackCube-v0':
+        if self.task == 'StackCube-v0' or self.task == 'StackCube-v1':
             for step_idx, key in enumerate(self.data['infos/is_cubaA_grasped'][idx]):
                 if key: break
             key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
