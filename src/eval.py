@@ -110,13 +110,19 @@ def parse_args():
 
 def process_obs(obs):
     image_obs = obs["image"]
-    rgb = image_obs["base_camera"]["rgb"]
-    depth = image_obs["base_camera"]["depth"]
+    rgb1 = image_obs["base_camera"]["rgb"]
+    depth1 = image_obs["base_camera"]["depth"]
     rgb2 = image_obs["hand_camera"]["rgb"]
     depth2 = image_obs["hand_camera"]["depth"]
-    rgbd = np.concatenate([rgb, depth, rgb2, depth2], axis=-1)
-    rgbd = np.transpose(rgbd, (2, 0, 1))
     
+    rgb1 = rgb1 / 255.0
+    rgb2 = rgb2 / 255.0
+    depth1 = depth1 / (2**10)
+    depth2 = depth2 / (2**10)
+    
+    rgbd = np.concatenate([rgb1, depth1, rgb2, depth2], axis=-1)
+    rgbd = np.transpose(rgbd, (2, 0, 1))
+     
     base_pose = np.array(obs['agent']['base_pose'])
     qpos = np.array(obs['agent']['qpos'])
     qvel = np.array(obs['agent']['qvel'])
@@ -137,9 +143,11 @@ if __name__ == "__main__":
     print('Loaded ckpt from:', path)  
     state_dict_from_ckpt = torch.load(path)['model']
     obs_dim = (8, 128, 128) # TODO: hardcode for now
-    state_dim = 32
-    action_dim = 8
+    state_dim = state_dict_from_ckpt['state_encoder.extractors.states.weight'].shape[1]
+    action_dim = state_dict_from_ckpt['action_encoder.net.0.weight'].shape[1]
     max_timestep = state_dict_from_ckpt['global_pos_emb'].shape[1]
+    print("state_dim: ", state_dim)
+    print("action_dim: ", action_dim)
     print("max_timestep: ", max_timestep)
     print("checkpoint: ", args.from_ckpt)
     conf = GPTConfig(
