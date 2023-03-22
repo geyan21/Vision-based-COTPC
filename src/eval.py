@@ -117,8 +117,9 @@ def process_obs(obs):
     
     rgb1 = rgb1 / 255.0
     rgb2 = rgb2 / 255.0
-    depth1 = depth1 / (2**10)
-    depth2 = depth2 / (2**10)
+    # no need to rescale depth during evaluation
+    # depth1 = depth1 / (2**10)
+    # depth2 = depth2 / (2**10)
     
     rgbd = np.concatenate([rgb1, depth1, rgb2, depth2], axis=-1)
     rgbd = np.transpose(rgbd, (2, 0, 1))
@@ -218,9 +219,9 @@ if __name__ == "__main__":
             # You might want to use these additional metrics.         
             if args.task == 'PickCube-v0' or args.task == 'LiftCube-v1':
                 metric_dict['is_grasped'][start_idx].append(info['is_grasped'])
-            # if args.task == 'StackCube-v0':
-            #     metric_dict['is_cubaA_grasped'][j].append(info['is_cubaA_grasped'])
-            #     metric_dict['is_cubeA_on_cubeB'][j].append(info['is_cubeA_on_cubeB'])
+            if args.task == 'StackCube-v0' or args.task == 'StackCube-v1':
+                metric_dict['is_cubaA_grasped'][start_idx].append(info['is_cubaA_grasped'])
+                metric_dict['is_cubeA_on_cubeB'][start_idx].append(info['is_cubeA_on_cubeB'])
             # if args.task == 'PegInsertionSide-v0':
             #     metric_dict['is_grasped'][j].append(info['is_grasped'])
             #     metric_dict['pre_inserted'][j].append(info['pre_inserted'])
