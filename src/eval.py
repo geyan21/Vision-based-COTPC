@@ -176,7 +176,7 @@ if __name__ == "__main__":
     env_kwargs["obs_mode"] = args.obs_mode
     env_kwargs["control_mode"] = args.control_mode
     np.random.seed(args.seed)
-    if args.task == 'TurnFaucet-v0':
+    if args.task == 'TurnFaucet-v0' or args.task == 'TurnFaucet-v1':
         length_all = len(json_data["episodes"])
         ids = []
         for i in range(10):  # Hard-code the 10 data splits for permutation.
@@ -222,11 +222,11 @@ if __name__ == "__main__":
             if args.task == 'StackCube-v0' or args.task == 'StackCube-v1':
                 metric_dict['is_cubaA_grasped'][start_idx].append(info['is_cubaA_grasped'])
                 metric_dict['is_cubeA_on_cubeB'][start_idx].append(info['is_cubeA_on_cubeB'])
-            # if args.task == 'PegInsertionSide-v0':
-            #     metric_dict['is_grasped'][j].append(info['is_grasped'])
-            #     metric_dict['pre_inserted'][j].append(info['pre_inserted'])
-            # if args.task == 'TurnFaucet-v0':
-            #     metric_dict['is_contacted'][j].append(info['is_contacted'])
+            if args.task == 'PegInsertionSide-v0':
+                metric_dict['is_grasped'][start_idx].append(info['is_grasped'])
+                metric_dict['pre_inserted'][start_idx].append(info['pre_inserted'])
+            if args.task == 'TurnFaucet-v0' or args.task == 'TurnFaucet-v1':
+                metric_dict['is_contacted'][start_idx].append(info['is_contacted'])
             metric_dict['success'][start_idx].append(info['success'])
 
     # # Parallel Environment

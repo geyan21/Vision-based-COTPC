@@ -107,7 +107,7 @@ class MS2Demos(Dataset):
 
         # Since TurnFaucet uses 10 different faucet models, we shuffle the data
         # such that the resulting sampled data are evenly sampled across faucet models.
-        if self.task == 'TurnFaucet-v0':
+        if self.task == 'TurnFaucet-v0' or self.task == 'TurnFaucet-v1':
             ids = []
             for i in range(10):  # Hard-code the 10 data splits for permutation.
                 t_ids = np.random.permutation(len(traj_all)//10)[:length//10]
