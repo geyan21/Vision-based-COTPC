@@ -184,6 +184,14 @@ if __name__ == "__main__":
             t_ids += i*length_all//10
             ids.append(t_ids)
         eval_ids = np.concatenate(ids)
+    if args.task == 'TurnFaucet-v2':
+        length_all = len(json_data["episodes"])
+        ids = []
+        for i in range(60):  # Hard-code the 60 data splits for permutation.
+            t_ids = np.random.permutation(length_all//60)[:args.num_traj//60]
+            t_ids += i*length_all//60
+            ids.append(t_ids)
+        eval_ids = np.concatenate(ids)
     else:
         eval_ids = np.random.permutation(len(json_data["episodes"]))[:args.num_traj]
 
@@ -222,10 +230,10 @@ if __name__ == "__main__":
             if args.task == 'StackCube-v0' or args.task == 'StackCube-v1':
                 metric_dict['is_cubaA_grasped'][start_idx].append(info['is_cubaA_grasped'])
                 metric_dict['is_cubeA_on_cubeB'][start_idx].append(info['is_cubeA_on_cubeB'])
-            if args.task == 'PegInsertionSide-v0':
+            if args.task == 'PegInsertionSide-v0' or args.task == 'PegInsertionSide-v1':
                 metric_dict['is_grasped'][start_idx].append(info['is_grasped'])
                 metric_dict['pre_inserted'][start_idx].append(info['pre_inserted'])
-            if args.task == 'TurnFaucet-v0' or args.task == 'TurnFaucet-v1':
+            if args.task == 'TurnFaucet-v0' or args.task == 'TurnFaucet-v1' or args.task == 'TurnFaucet-v2':
                 metric_dict['is_contacted'][start_idx].append(info['is_contacted'])
             metric_dict['success'][start_idx].append(info['success'])
 

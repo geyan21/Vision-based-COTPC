@@ -114,6 +114,13 @@ class MS2Demos(Dataset):
                 t_ids += i*len(traj_all)//10
                 ids.append(t_ids)
             ids = np.concatenate(ids)
+        elif self.task == 'TurnFaucet-v2':
+            ids = []
+            for i in range(60):  # Hard-code the 60 data splits for permutation.
+                t_ids = np.random.permutation(len(traj_all)//60)[:length//60]
+                t_ids += i*len(traj_all)//60
+                ids.append(t_ids)
+            ids = np.concatenate(ids)
         else:
             ids = np.random.permutation(len(traj_all))[:length]
 
@@ -154,7 +161,7 @@ class MS2Demos(Dataset):
         # If TurnFaucet (two key states)
         # key state I: is_contacted -> true
         # key state II: end of the trajectory
-        if self.task == 'TurnFaucet-v0' or self.task == 'TurnFaucet-v1':
+        if self.task == 'TurnFaucet-v0' or self.task == 'TurnFaucet-v1' or self.task == 'TurnFaucet-v2':
             for step_idx, key in enumerate(self.data['infos/is_contacted'][idx]):
                 if key: break
             key_states.append(self.data['states'][idx][step_idx+1].astype(np.float32))
@@ -265,7 +272,7 @@ if __name__ == "__main__":
     
     # The default values for CoTPC for tasks in ManiSkill2.
     batch_size, num_traj, seed, min_seq_length, max_seq_length, task = \
-        256, 100, 0, 60, 60, 'LiftCube-v1'
+        12, 200, 0, 60, 60, 'TurnFaucet-v2'
 
     train_dataset = MS2Demos(
         control_mode='pd_joint_delta_pos', 
@@ -282,7 +289,7 @@ if __name__ == "__main__":
         dataset=train_dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=16,
+        num_workers=4,
         collate_fn=collate_fn)
     
     data = next(iter(train_data))
