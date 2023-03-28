@@ -12,8 +12,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
+from C2DFNet.DualFastnet_res import DualFastnet
+from einops import rearrange, repeat, reduce
 import pdb
-import time
 
 
 class MLP(nn.Module):
@@ -197,6 +198,7 @@ class BlocksWithCoT(nn.Module):
                 r = torch.randint(0, (T - self.len_key_states) // 2, [B])[:, None] * 2
             else:
                 r = torch.randint(0, T - self.len_key_states, [B])[:, None]
+            # When '+a', we always ignore the last action token (set mask=1).
             mask = torch.arange(0, T).repeat(B, 1) > r + self.len_key_states
             key_state_mask = torch.zeros(
                 [B, self.n_head, T, T], dtype=bool, device=x.device)
@@ -248,8 +250,9 @@ class GPTWithCoT(nn.Module):
         self.blocks = BlocksWithCoT(config)
         
         # State embeddings.
-        self.state_encoder = MLP(self.state_dim, config.n_embd, hidden_dims=[256])
-        
+        self.state_encoder = MLP(self.state_dim, 64, hidden_dims=[256])
+        self.dual_encoder_1 = DualFastnet()
+        self.dual_encoder_1 = DualFastnet()
         # Action embeddings.
         if '+a' in self.model_type:
             self.action_encoder = MLP(self.action_dim, config.n_embd, hidden_dims=[256])
@@ -284,11 +287,30 @@ class GPTWithCoT(nn.Module):
     # `timesteps` is used for the global+local position embedding design similar
     # to the one in Decision Transformer. `key_state_mask` is used so that the 
     # (all-to-all) key state query tokens can attend to later tokens. 
-    def forward(self, states, timesteps, actions=None, key_state_mask=None):
-        B, T = states.shape[0], states.shape[1]
+    def forward(self, obs, states, timesteps, actions=None, key_state_mask=None):
+        #B, T = states.shape[0], states.shape[1]
+        B, T, C, H, W = obs.shape
+        rgb1 = obs[:,:,0:3,:,:].view(-1,3,H,W)
+        depth1 = obs[:,:,3:4,:,:].view(-1,1,H,W).repeat(1, 3, 1, 1)
+        rgb2 = obs[:,:,4:7,:,:].view(-1,3,H,W)
+        depth2 = obs[:,:,7:8,:,:].view(-1,1,H,W).repeat(1, 3, 1, 1)
+        #[B*T, 16, 16, 16]
+        # pdb.set_trace()
+        dual_embedd_1 = self.dual_encoder_1(rgb1, depth1)
+        dual_embedd_2 = self.dual_encoder_1(rgb2, depth2)
+        #[B*T, 16, 8, 8] -> [B, T, 64*16]
+        dual_embedd_1 = dual_embedd_1.view(B, T, -1)
+        dual_embedd_2 = dual_embedd_2.view(B, T, -1)
+        
+
         state_embeddings = self.state_encoder(states)
+        state_embeddings = torch.cat((state_embeddings, dual_embedd_1, dual_embedd_2), dim=2)
+        # state_embeddings = torch.cat((state_embeddings, dual_embedd_1), dim=2)
+
+        #pdb.set_trace()
 
         # Embeddings for state (action, and key state query) tokens.
+        # token_embeddings: [B, T, 8320]
         token_embeddings = torch.zeros([B, self.block_size, self.config.n_embd], 
                                        dtype=torch.float32, device=states.device)
         
@@ -307,12 +329,8 @@ class GPTWithCoT(nn.Module):
         # Set up position embeddings similar to that in Decision Transformer.
         global_pos_emb = torch.repeat_interleave(self.global_pos_emb, B, dim=0)
         timesteps_rp = torch.repeat_interleave(timesteps[:, None], self.config.n_embd, dim=-1)
-        #pdb.set_trace()
         global_pos_emb = torch.gather(
             global_pos_emb, 1, timesteps_rp.long())  # BS x 1 x D
-        #pdb.set_trace()
-        # local_pos_emb = self.local_pos_emb.repeat(1,2,1) \
-        #     if '+a' in self.model_type else self.local_pos_emb
         local_pos_emb = torch.repeat_interleave(self.local_pos_emb, 2, dim=1) \
             if '+a' in self.model_type else self.local_pos_emb
 
@@ -342,6 +360,7 @@ class GPTWithCoT(nn.Module):
         if '+a' in self.model_type:
             # Remove the extra tokens when in eval mode.
             act_preds = act_preds[:,:T*2:2]
+            #pdb.set_trace()
 
         return act_preds, key_state_preds 
 
@@ -357,7 +376,7 @@ class GPTWithCoT(nn.Module):
         decay = set()
         no_decay = set()
         whitelist_weight_modules = (torch.nn.Linear, torch.nn.Conv2d)
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding, torch.nn.BatchNorm2d, torch.nn.BatchNorm1d, torch.nn.ReLU, torch.nn.PReLU)
         for mn, m in self.named_modules():
             for pn, _ in m.named_parameters():
                 fpn = '%s.%s' % (mn, pn) if mn else pn # full param name

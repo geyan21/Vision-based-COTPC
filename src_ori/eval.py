@@ -124,7 +124,7 @@ if __name__ == "__main__":
         eval_ids = np.random.permutation(len(json_data["episodes"]))[:args.num_traj]
 
     # Number of parallel environments.
-    n_env = 2 #25
+    n_env = 25 #25
     assert len(eval_ids) % n_env == 0, f'{len(eval_ids)}'
     envs = get_mp_envs(args.task, n_env, **env_kwargs)
 
@@ -160,9 +160,8 @@ if __name__ == "__main__":
         for i in range(start_idx, min(start_idx + n_env, len(eval_ids))):
             reset_kwargs = {'seed': json_data["episodes"][eval_ids[i]]["episode_seed"]}
             reset_args_list.append(reset_kwargs)
-        
+
         s = torch.from_numpy(envs.reset(reset_args_list)).float()
-        pdb.set_trace()
         state_hist, action_hist, t = [s], [], np.zeros([n_env])
 
         for step in range(args.eval_max_steps): # args.eval_max_steps
@@ -177,17 +176,18 @@ if __name__ == "__main__":
             # Update metrics.
             for i, info in enumerate(infos):
                 j = start_idx + i   
-                # You might want to use these additional metrics.         
-                # if args.task == 'PickCube-v0':
-                #     metric_dict['is_grasped'][j].append(info['is_grasped'])
-                # if args.task == 'StackCube-v0':
-                #     metric_dict['is_cubaA_grasped'][j].append(info['is_cubaA_grasped'])
-                #     metric_dict['is_cubeA_on_cubeB'][j].append(info['is_cubeA_on_cubeB'])
-                # if args.task == 'PegInsertionSide-v0':
-                #     metric_dict['is_grasped'][j].append(info['is_grasped'])
-                #     metric_dict['pre_inserted'][j].append(info['pre_inserted'])
-                # if args.task == 'TurnFaucet-v0':
-                #     metric_dict['is_contacted'][j].append(info['is_contacted'])
+                if args.task == 'LiftCube-v0':
+                    metric_dict['is_grasped'][j].append(info['is_grasped'])
+                elif args.task == 'StackCube-v0':
+                    metric_dict['is_cubaA_grasped'][j].append(info['is_cubaA_grasped'])
+                    metric_dict['is_cubeA_on_cubeB'][j].append(info['is_cubeA_on_cubeB'])
+                elif args.task == 'PegInsertionSide-v0':
+                    metric_dict['is_grasped'][j].append(info['is_grasped'])
+                    metric_dict['pre_inserted'][j].append(info['pre_inserted'])
+                elif args.task == 'TurnFaucet-v0' or args.task == 'TurnFaucet-v1' or args.task == 'TurnFaucet-v2':
+                    metric_dict['is_contacted'][j].append(info['is_contacted'])
+                elif args.task == 'PushChair-v1' or args.task == 'PushChair-v2':
+                    metric_dict['chair_close_to_target'][j].append(info['chair_close_to_target'])
                 metric_dict['success'][j].append(info['success'])
             
     output_str = ''

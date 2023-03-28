@@ -1,12 +1,12 @@
 #!/bin/bash
-# PickCube-v0
+# LiftCube-v0
 # PushChair-v1
 # StackCube-v0
 # PegInsertionSide-v0
 
 # Assume that the *.h5 and *.json are in `../data/rigid_body_envs/TurnFaucet-v0/raw`,
 # replay the trajectories with a subset of a total of 10 faucet models.
-env="PegInsertionSide-v0"
+env="StackCube-v0"
 path="/data/geyan21/projects/CoTPC/data/v0/raw/demos/rigid_body/$env"
 xvfb-run -a python -m mani_skill2.trajectory.replay_trajectory \
     --traj-path $path/trajectory.h5 \
